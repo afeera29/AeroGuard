@@ -1,6 +1,6 @@
 streamlit
 pandas
-xgboost==1.7.6
+xgboost
 plotly
 pillow
-scikit-learn==1.2.2
+scikit-learn
