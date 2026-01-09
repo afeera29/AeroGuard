@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import xgboost as xgb
+import xgboost as xgb # Core XGBoost
 import plotly.express as px
 from PIL import Image, ImageDraw
 
@@ -22,34 +22,27 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOAD RESOURCES ---
+# --- LOAD RESOURCES (Using Core Booster) ---
 @st.cache_resource
 def load_resources():
-    # 1. Load Data (For the slider and features)
+    # 1. Load Data
     try:
+        # Load the demo data (Lite version)
         data = pd.read_csv("aeroguard_demo_data.csv")
     except FileNotFoundError:
-        try:
-            data = pd.read_csv("processed_test_data.csv")
-        except:
-            st.error("CRITICAL: No Data File Found! Please upload 'aeroguard_demo_data.csv' to GitHub.")
-            st.stop()
+        st.error("CRITICAL: 'aeroguard_demo_data.csv' not found. Please upload it to GitHub.")
+        st.stop()
 
-    # Clean Data Types (Force Integers)
+    # Clean Data Types (Force Integers to fix Slider Freeze)
     data.columns = data.columns.str.strip()
     data['unit_nr'] = data['unit_nr'].astype(int)
     data['time_cycles'] = data['time_cycles'].astype(int)
 
-    # 2. Load the Pre-Trained Model (The "Brain")
-    model = xgb.XGBRegressor()
+    # 2. Load Model using CORE API (Bypasses Scikit-Learn Errors)
+    # We use xgb.Booster() instead of xgb.XGBRegressor()
+    model = xgb.Booster()
     try:
         model.load_model("aeroguard_brain.json")
-        
-        # --- THE MAGIC PATCH ---
-        # This line tells Streamlit/Scikit-Learn that this is a valid Regressor.
-        # It fixes the "_estimator_type undefined" crash.
-        model._estimator_type = "regressor"
-        
     except Exception as e:
         st.error(f"Failed to load model: {e}")
         st.stop()
@@ -82,8 +75,8 @@ current_cycle = st.sidebar.slider(
     min_value=min_cycles, 
     max_value=max_cycles, 
     value=min_cycles,
-    step=1, 
-    key=f"slider_{selected_engine}_v4" 
+    step=1, # Force integer steps
+    key=f"slider_{selected_engine}_core" 
 )
 
 # 4. Get Data Row
@@ -95,12 +88,15 @@ if current_data.empty:
 else:
     st.sidebar.success(f"✅ Data Active: Cycle {current_cycle}")
 
-# --- PREDICTIONS ---
-# Drop ID columns to match the 192 features the JSON model expects
-features = current_data.drop(columns=['unit_nr', 'time_cycles', 'RUL'], errors='ignore')
+# --- PREDICTIONS (Updated for Core API) ---
+# Drop ID columns to match the features used during training
+features_df = current_data.drop(columns=['unit_nr', 'time_cycles', 'RUL'], errors='ignore')
 
-# Predict
-predicted_rul = model.predict(features)[0]
+# Convert to DMatrix (The format Core XGBoost expects)
+dmatrix_input = xgb.DMatrix(features_df)
+
+# Predict (Returns a raw float list)
+predicted_rul = model.predict(dmatrix_input)[0]
 
 # --- DASHBOARD UI ---
 st.title("✈️ AeroGuard: HPC-Aware Digital Twin")
@@ -131,9 +127,11 @@ with c_left:
         overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(overlay)
         
+        # Use .get() for safety
         temp = current_data.get('s_14_mean', pd.Series([0])).values[0]
         vib = current_data.get('s_11_mean', pd.Series([0])).values[0]
 
+        # Draw Warning Boxes
         if temp > 0.6:  
              draw.rectangle([129, 236, 1759, 722], fill=(255, 0, 0, 100))
         if vib > 0.6:
