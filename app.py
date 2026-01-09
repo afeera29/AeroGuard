@@ -22,37 +22,43 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOAD RESOURCES (Renamed to Force Cache Refresh) ---
+# --- LOAD RESOURCES ---
 @st.cache_resource
-def load_data_v3():
-    # 1. Load Data
+def load_resources():
+    # 1. Load Data (For the slider and features)
     try:
         data = pd.read_csv("aeroguard_demo_data.csv")
     except FileNotFoundError:
         try:
             data = pd.read_csv("processed_test_data.csv")
         except:
-            st.error("CRITICAL: No Data File Found! Upload 'aeroguard_demo_data.csv' to GitHub.")
+            st.error("CRITICAL: No Data File Found! Please upload 'aeroguard_demo_data.csv' to GitHub.")
             st.stop()
 
-    # 2. Clean Data Types (Force Integers)
-    # This prevents the "float vs int" mismatch that freezes sliders
-    data.columns = data.columns.str.strip() # Remove accidental spaces
+    # Clean Data Types (Force Integers)
+    data.columns = data.columns.str.strip()
     data['unit_nr'] = data['unit_nr'].astype(int)
     data['time_cycles'] = data['time_cycles'].astype(int)
 
-    # 3. Train Model on the Fly
-    X = data.drop(columns=['unit_nr', 'time_cycles', 'RUL'], errors='ignore')
-    y = data['RUL']
-    
+    # 2. Load the Pre-Trained Model (The "Brain")
     model = xgb.XGBRegressor()
-    model.fit(X, y)
+    try:
+        model.load_model("aeroguard_brain.json")
+        
+        # --- THE MAGIC PATCH ---
+        # This line tells Streamlit/Scikit-Learn that this is a valid Regressor.
+        # It fixes the "_estimator_type undefined" crash.
+        model._estimator_type = "regressor"
+        
+    except Exception as e:
+        st.error(f"Failed to load model: {e}")
+        st.stop()
     
     return model, data
 
 # --- MAIN APP LOGIC ---
 try:
-    model, df = load_data_v3()
+    model, df = load_resources()
 except Exception as e:
     st.error(f"System Error: {e}")
     st.stop()
@@ -71,30 +77,29 @@ engine_data = df[df['unit_nr'] == selected_engine]
 min_cycles = int(engine_data['time_cycles'].min()) 
 max_cycles = int(engine_data['time_cycles'].max())
 
-# ADDED 'step=1' to force integer movements
 current_cycle = st.sidebar.slider(
     "Flight Cycle (Time)", 
     min_value=min_cycles, 
     max_value=max_cycles, 
     value=min_cycles,
     step=1, 
-    key=f"slider_{selected_engine}_v3" # New key forces new slider
+    key=f"slider_{selected_engine}_v4" 
 )
 
 # 4. Get Data Row
 current_data = engine_data[engine_data['time_cycles'] == current_cycle]
 
-# --- DEBUGGING: Remove this later if you want ---
-# If the app is frozen, this text will help you see WHY.
 if current_data.empty:
     st.sidebar.error(f"❌ No data for Cycle {current_cycle}")
     st.stop()
 else:
-    # Shows green check if data is found
     st.sidebar.success(f"✅ Data Active: Cycle {current_cycle}")
 
 # --- PREDICTIONS ---
+# Drop ID columns to match the 192 features the JSON model expects
 features = current_data.drop(columns=['unit_nr', 'time_cycles', 'RUL'], errors='ignore')
+
+# Predict
 predicted_rul = model.predict(features)[0]
 
 # --- DASHBOARD UI ---
@@ -126,11 +131,9 @@ with c_left:
         overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(overlay)
         
-        # Use .get() for safety
         temp = current_data.get('s_14_mean', pd.Series([0])).values[0]
         vib = current_data.get('s_11_mean', pd.Series([0])).values[0]
 
-        # Draw Warning Boxes
         if temp > 0.6:  
              draw.rectangle([129, 236, 1759, 722], fill=(255, 0, 0, 100))
         if vib > 0.6:
