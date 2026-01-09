@@ -22,9 +22,9 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOAD & TRAIN RESOURCES ---
+# --- LOAD RESOURCES (Renamed to Force Cache Refresh) ---
 @st.cache_resource
-def load_resources():
+def load_data_v3():
     # 1. Load Data
     try:
         data = pd.read_csv("aeroguard_demo_data.csv")
@@ -35,12 +35,13 @@ def load_resources():
             st.error("CRITICAL: No Data File Found! Upload 'aeroguard_demo_data.csv' to GitHub.")
             st.stop()
 
-    # --- CRITICAL FIX: FORCE INTEGERS ---
-    # This fixes the "Frozen Slider" issue by ensuring strict integer matching
+    # 2. Clean Data Types (Force Integers)
+    # This prevents the "float vs int" mismatch that freezes sliders
+    data.columns = data.columns.str.strip() # Remove accidental spaces
     data['unit_nr'] = data['unit_nr'].astype(int)
     data['time_cycles'] = data['time_cycles'].astype(int)
 
-    # 2. TRAIN FRESH MODEL (Compatibility Fix)
+    # 3. Train Model on the Fly
     X = data.drop(columns=['unit_nr', 'time_cycles', 'RUL'], errors='ignore')
     y = data['RUL']
     
@@ -51,7 +52,7 @@ def load_resources():
 
 # --- MAIN APP LOGIC ---
 try:
-    model, df = load_resources()
+    model, df = load_data_v3()
 except Exception as e:
     st.error(f"System Error: {e}")
     st.stop()
@@ -67,26 +68,30 @@ selected_engine = st.sidebar.selectbox("Select Engine ID", engine_ids)
 engine_data = df[df['unit_nr'] == selected_engine]
 
 # 3. Time Slider
-# Use standard int() to be 100% sure
 min_cycles = int(engine_data['time_cycles'].min()) 
 max_cycles = int(engine_data['time_cycles'].max())
 
-# Unique key ensures slider resets when engine changes
+# ADDED 'step=1' to force integer movements
 current_cycle = st.sidebar.slider(
     "Flight Cycle (Time)", 
     min_value=min_cycles, 
     max_value=max_cycles, 
     value=min_cycles,
-    key=f"slider_{selected_engine}"
+    step=1, 
+    key=f"slider_{selected_engine}_v3" # New key forces new slider
 )
 
-# Get specific row
-# This filtering is now safe because both sides are definitely Integers
+# 4. Get Data Row
 current_data = engine_data[engine_data['time_cycles'] == current_cycle]
 
+# --- DEBUGGING: Remove this later if you want ---
+# If the app is frozen, this text will help you see WHY.
 if current_data.empty:
-    st.error(f"Cycle {current_cycle} data not found for Engine {selected_engine}.")
+    st.sidebar.error(f"❌ No data for Cycle {current_cycle}")
     st.stop()
+else:
+    # Shows green check if data is found
+    st.sidebar.success(f"✅ Data Active: Cycle {current_cycle}")
 
 # --- PREDICTIONS ---
 features = current_data.drop(columns=['unit_nr', 'time_cycles', 'RUL'], errors='ignore')
