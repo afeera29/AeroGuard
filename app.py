@@ -26,7 +26,6 @@ st.markdown("""
 @st.cache_resource
 def load_resources():
     # 1. Load Data
-    # Try loading the demo data (Lite) or fallback to full data
     try:
         data = pd.read_csv("aeroguard_demo_data.csv")
     except FileNotFoundError:
@@ -36,11 +35,12 @@ def load_resources():
             st.error("CRITICAL: No Data File Found! Upload 'aeroguard_demo_data.csv' to GitHub.")
             st.stop()
 
-    # 2. TRAIN A FRESH MODEL (The Compatibility Fix)
-    # Instead of loading a saved file that might conflict, we train a new one instantly.
-    # It takes <1 second on the lite dataset.
-    
-    # Prepare training data from the loaded csv
+    # --- CRITICAL FIX: FORCE INTEGERS ---
+    # This fixes the "Frozen Slider" issue by ensuring strict integer matching
+    data['unit_nr'] = data['unit_nr'].astype(int)
+    data['time_cycles'] = data['time_cycles'].astype(int)
+
+    # 2. TRAIN FRESH MODEL (Compatibility Fix)
     X = data.drop(columns=['unit_nr', 'time_cycles', 'RUL'], errors='ignore')
     y = data['RUL']
     
@@ -67,9 +67,11 @@ selected_engine = st.sidebar.selectbox("Select Engine ID", engine_ids)
 engine_data = df[df['unit_nr'] == selected_engine]
 
 # 3. Time Slider
+# Use standard int() to be 100% sure
 min_cycles = int(engine_data['time_cycles'].min()) 
 max_cycles = int(engine_data['time_cycles'].max())
 
+# Unique key ensures slider resets when engine changes
 current_cycle = st.sidebar.slider(
     "Flight Cycle (Time)", 
     min_value=min_cycles, 
@@ -79,10 +81,11 @@ current_cycle = st.sidebar.slider(
 )
 
 # Get specific row
+# This filtering is now safe because both sides are definitely Integers
 current_data = engine_data[engine_data['time_cycles'] == current_cycle]
 
 if current_data.empty:
-    st.error(f"Cycle {current_cycle} data not found.")
+    st.error(f"Cycle {current_cycle} data not found for Engine {selected_engine}.")
     st.stop()
 
 # --- PREDICTIONS ---
