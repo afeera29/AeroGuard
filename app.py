@@ -22,21 +22,30 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOAD RESOURCES ---
+# --- LOAD & TRAIN RESOURCES ---
 @st.cache_resource
 def load_resources():
-    # 1. Load the Model
+    # 1. Load Data
+    # Try loading the demo data (Lite) or fallback to full data
+    try:
+        data = pd.read_csv("aeroguard_demo_data.csv")
+    except FileNotFoundError:
+        try:
+            data = pd.read_csv("processed_test_data.csv")
+        except:
+            st.error("CRITICAL: No Data File Found! Upload 'aeroguard_demo_data.csv' to GitHub.")
+            st.stop()
+
+    # 2. TRAIN A FRESH MODEL (The Compatibility Fix)
+    # Instead of loading a saved file that might conflict, we train a new one instantly.
+    # It takes <1 second on the lite dataset.
+    
+    # Prepare training data from the loaded csv
+    X = data.drop(columns=['unit_nr', 'time_cycles', 'RUL'], errors='ignore')
+    y = data['RUL']
+    
     model = xgb.XGBRegressor()
-    model.load_model("aeroguard_brain.json")
-    
-    # --- FIX FOR "ESTIMATOR TYPE UNDEFINED" ERROR ---
-    # This manually tells Streamlit that "Yes, this is a regressor model"
-    # It fixes the version mismatch bug.
-    model._estimator_type = "regressor" 
-    
-    # 2. Load the "Lite" Data (The small file you just uploaded)
-    # MAKE SURE this filename matches exactly what you uploaded to GitHub
-    data = pd.read_csv("aeroguard_demo_data.csv")
+    model.fit(X, y)
     
     return model, data
 
@@ -44,33 +53,32 @@ def load_resources():
 try:
     model, df = load_resources()
 except Exception as e:
-    st.error(f"Error loading files: {e}")
+    st.error(f"System Error: {e}")
     st.stop()
 
 # --- SIDEBAR: FLIGHT CONTROLLER ---
 st.sidebar.title("🎮 Flight Controller")
 
 # 1. Select Engine
-engine_ids = sorted(df['unit_nr'].unique()) # Sort IDs nicely
+engine_ids = sorted(df['unit_nr'].unique())
 selected_engine = st.sidebar.selectbox("Select Engine ID", engine_ids)
 
-# 2. Filter Data for this Engine
+# 2. Filter Data
 engine_data = df[df['unit_nr'] == selected_engine]
 
-# 3. Time Slider Logic (FIXED)
+# 3. Time Slider
 min_cycles = int(engine_data['time_cycles'].min()) 
 max_cycles = int(engine_data['time_cycles'].max())
 
-# We add 'key' so the slider completely resets when you pick a new engine
 current_cycle = st.sidebar.slider(
     "Flight Cycle (Time)", 
     min_value=min_cycles, 
     max_value=max_cycles, 
     value=min_cycles,
-    key=f"slider_{selected_engine}" # <--- THIS FIXES THE WEIRD GLITCH
+    key=f"slider_{selected_engine}"
 )
 
-# Get the specific row of data for this exact moment
+# Get specific row
 current_data = engine_data[engine_data['time_cycles'] == current_cycle]
 
 if current_data.empty:
@@ -84,7 +92,6 @@ predicted_rul = model.predict(features)[0]
 # --- DASHBOARD UI ---
 st.title("✈️ AeroGuard: HPC-Aware Digital Twin")
 
-# Top Metrics Row
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Engine ID", f"#{selected_engine}")
@@ -102,7 +109,6 @@ with col4:
 
 st.markdown("---")
 
-# Main Content
 c_left, c_right = st.columns([1, 1])
 
 with c_left:
@@ -112,7 +118,7 @@ with c_left:
         overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(overlay)
         
-        # Safe access to sensor values
+        # Use .get() for safety
         temp = current_data.get('s_14_mean', pd.Series([0])).values[0]
         vib = current_data.get('s_11_mean', pd.Series([0])).values[0]
 
@@ -126,11 +132,10 @@ with c_left:
         st.image(combined, use_container_width=True, caption="Real-time Thermal & Vibration Overlay")
         
     except FileNotFoundError:
-        st.warning("🖼️ 'engine.jpg' not found.")
+        st.warning("🖼️ 'engine.jpg' not found in GitHub repository.")
 
 with c_right:
     st.subheader("Live Telemetry")
-    
     slope_cols = [c for c in current_data.columns if 'fslope' in c][:5] 
     if slope_cols:
         slope_data = current_data[slope_cols].T
